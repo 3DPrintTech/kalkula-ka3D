@@ -95,8 +95,8 @@
 
     <script>
         let mesh = null;
-        let modelVolume = 0; // Přejmenováno z 'volume' pro srozumitelnost
-        let supportVolume = 0; // Nová proměnná pro objem podpor
+        let modelVolume = 0;
+        let supportVolume = 0;
         let uploadedFileUrl = null;
         let uploadedFileName = '';
         const fileNameElement = document.getElementById('file-name');
@@ -135,9 +135,6 @@
         }
         animate();
         
-        // =================================================================
-        // NOVÁ FUNKCE PRO ODHAD PODPOR
-        // =================================================================
         function calculateSupportVolume(geometry, overhangAngleDegrees = 45, supportDensity = 0.10) {
             const positions = geometry.attributes.position;
             const downVector = new THREE.Vector3(0, 0, -1);
@@ -159,13 +156,9 @@
 
                 const faceNormal = normal.crossVectors(vB.clone().sub(vA), vC.clone().sub(vA)).normalize();
                 
-                // Zjišťujeme, zda je trojúhelník převis
                 if (faceNormal.dot(downVector) > angleThreshold) {
-                    // Spočítáme 2D průmět plochy trojúhelníku do roviny XY
                     const projectedArea = Math.abs(0.5 * (vA.x * (vB.y - vC.y) + vB.x * (vC.y - vA.y) + vC.x * (vA.y - vB.y)));
                     totalSupportProjectedArea += projectedArea;
-
-                    // Průměrná výška trojúhelníku
                     const avgHeight = (vA.z + vB.z + vC.z) / 3;
                     totalSupportHeight += avgHeight;
                     supportTriangleCount++;
@@ -176,13 +169,11 @@
                 return 0;
             }
 
-            // Tento výpočet je zjednodušený - neřeší překrývání "stínů"
-            // Pro odhad to ale bude stačit.
             const averageOverhangHeight = totalSupportHeight / supportTriangleCount;
             const estimatedFullVolume = totalSupportProjectedArea * averageOverhangHeight;
-            const estimatedRealVolume = estimatedFullVolume * supportDensity; // Aplikujeme hustotu podpor
+            const estimatedRealVolume = estimatedFullVolume * supportDensity;
 
-            return estimatedRealVolume / 1000; // Převod z mm^3 na cm^3
+            return estimatedRealVolume / 1000;
         }
 
 
@@ -200,7 +191,6 @@
                     const geometry = loader.parse(buffer);
                     geometry.computeBoundingBox();
                     
-                    // Výpočet objemu modelu
                     let currentModelVolume = 0;
                     const positions = geometry.attributes.position.array;
                     for (let i = 0; i < positions.length; i += 9) {
@@ -215,13 +205,11 @@
                     const material = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 1, metalness: 0 });
                     mesh = new THREE.Mesh(geometry, material);
                     
-                    // Posazení modelu na podlahu
                     geometry.center();
                     const boundingBox = new THREE.Box3().setFromObject(mesh);
                     const height = boundingBox.max.z - boundingBox.min.z;
                     mesh.position.z = height / 2;
                     
-                    // NOVÉ: Výpočet objemu podpor
                     supportVolume = calculateSupportVolume(geometry, 45, 0.10);
                     
                     scene.add(mesh);
@@ -262,23 +250,24 @@
                 fileNameElement.classList.add('error-message');
                 return;
             }
+
             const densities = { PLA: 1.24, PETG: 1.27, ABS: 1.04, TPU: 1.21 };
             const material = materialSelect.value;
             let pevnostHodnota = parseFloat(document.getElementById('pevnost').value);
             let infillPercent = 1.0;
-            if (pevnostHodnota === 0.1) infillPercent = 0.10; else if (pevnostHodnota === 0.3) infillPercent = 0.50; else if (pevnostHodnota === 1.0) infillPercent = 1.00;
+            if (pevnostHodnota === 0.1) infillPercent = 0.10;
+            else if (pevnostHodnota === 0.3) infillPercent = 0.50;
+            else if (pevnostHodnota === 1.0) infillPercent = 1.00;
             const count = parseInt(document.getElementById('pocet-kusu').value) || 1;
-            
-            // Výpočty hmotnosti
-            const modelMass = modelVolume * densities[material] * infillPercent;
-            const supportMass = supportVolume * densities[material]; // Hustota materiálu, hustotu podpor jsme započítali už při objemu
-            const totalMass = (modelMass + supportMass) * count;
 
-            const timePrint = 7 + (totalMass / count) / 10; // Čas odhadujeme z jednoho kusu
+            const modelMass = modelVolume * densities[material] * infillPercent;
+            const supportMass = supportVolume * densities[material];
+            const totalMassPerPiece = modelMass + supportMass;
+            const totalMass = totalMassPerPiece * count;
+            const timePrint = 7 + totalMassPerPiece / 10;
             const cenaZaGram = (material === 'ABS') ? 5 : 4;
             const castka = totalMass * cenaZaGram;
             
-            // Zobrazení výsledků
             document.getElementById('vypocet-objem').textContent = `Hmotnost modelu: ${modelMass.toFixed(2)} g`;
             
             const supportEl = document.getElementById('vypocet-podpory');
@@ -300,6 +289,7 @@
                 const resultBox = document.getElementById('vypocet-objem').parentNode;
                 resultBox.insertBefore(rozmerNode, document.getElementById('vypocet-podpory'));
             }
+
             document.getElementById('vypocet-cena').textContent = `Odhadovaná cena: ${castka.toFixed(2)} Kč`;
             document.getElementById('vypocet-cas').textContent = `Odhadovaný čas tisku: ${timePrint.toFixed(1)} minut`;
             const jokes = ['ale tiskne se sousedovi držák.', 'ale robot v kuchyni připravuje kafe.', 'ale nejsem doma.', 'ale před tebou je fronta jak na poště.', 'ale dnes je moc teplo.'];
@@ -308,7 +298,6 @@
             const pevnostSelect = document.getElementById('pevnost');
             const pevnostText = pevnostSelect.options[pevnostSelect.selectedIndex].text;
 
-            // Aktualizace rekapitulace
             document.getElementById('rekapitulace').value = `Jméno: ${document.querySelector('input[name="jmeno"]').value}
 Email: ${document.querySelector('input[name="email"]').value}
 ---
@@ -316,7 +305,7 @@ Model: ${uploadedFileName}
 Odkaz na model: ${uploadedFileUrl}
 Hmotnost modelu: ${modelMass.toFixed(2)} g
 Hmotnost podpor (odhad): ${supportMass.toFixed(2)} g
-Celková hmotnost/ks: ${(totalMass/count).toFixed(2)} g
+Celková hmotnost/ks: ${totalMassPerPiece.toFixed(2)} g
 Odhadovaná cena: ${castka.toFixed(2)} Kč
 Odhadovaný čas/ks: ${timePrint.toFixed(1)} min
 Rozměr: ${meshSize.x.toFixed(1)} × ${meshSize.y.toFixed(1)} × ${meshSize.z.toFixed(1)} mm
