@@ -85,9 +85,7 @@
                 <input type="text" name="jmeno" placeholder="Vaše jméno" required>
                 <input type="email" name="email" id="email-input" placeholder="Váš e-mail" required>
                 <textarea name="rekapitulace" id="rekapitulace" style="display:none;"></textarea>
-                
                 <input type="hidden" name="_next" value="./dekuji.html">
-                
                 <button type="submit" class="send-btn">Odeslat poptávku</button>
             </form>
         </div>
@@ -101,7 +99,6 @@
         const fileNameElement = document.getElementById('file-name');
         const scene = new THREE.Scene();
         let axes = null;
-        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         const viewer = document.getElementById('viewer');
         renderer.setSize(viewer.clientWidth, viewer.clientHeight);
@@ -112,19 +109,34 @@
         camera.position.set(0, 150, 0);
         camera.up.set(0, 0, 1);
         camera.lookAt(0, 0, 0);
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+
+        // === FINÁLNÍ HYBRIDNÍ OSVĚTLENÍ ===
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-        directionalLight.position.copy(camera.position);
-        directionalLight.target.position.set(0, 0, 0);
-        scene.add(directionalLight);
-        scene.add(directionalLight.target);
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        keyLight.position.set(100, 100, 100);
+        keyLight.target.position.set(0, 0, 0);
+        scene.add(keyLight);
+        scene.add(keyLight.target);
+
+        const rimLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        rimLight.position.set(-100, 100, -50);
+        rimLight.target.position.set(0, 0, 0);
+        scene.add(rimLight);
+        scene.add(rimLight.target);
+
+        const cameraLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        scene.add(cameraLight);
+        // =====================================
+
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
-            directionalLight.position.copy(camera.position);
+            // Světlo z kamery sleduje její pozici
+            cameraLight.position.copy(camera.position);
             renderer.render(scene, camera);
         }
         animate();
@@ -180,7 +192,6 @@
         colorSelect.addEventListener('change', updateColor);
         materialSelect.value = 'PLA';
         refreshColors();
-
         document.getElementById('calculate-btn').addEventListener('click', () => {
             if (!mesh) {
                 console.error('Výpočet nelze provést: Nebyl nahrán STL soubor.');
@@ -216,11 +227,9 @@
             const jokes = ['ale tiskne se sousedovi držák.', 'ale robot v kuchyni připravuje kafe.', 'ale nejsem doma.', 'ale před tebou je fronta jak na poště.', 'ale dnes je moc teplo.'];
             document.getElementById('vtipna-veta').textContent = `Tisk trvá ${timePrint.toFixed(1)} minut ${jokes[Math.floor(Math.random() * jokes.length)]}`;
             
-            // Získání textu pro Pevnost
             const pevnostSelect = document.getElementById('pevnost');
             const pevnostText = pevnostSelect.options[pevnostSelect.selectedIndex].text;
 
-            // Sestavení finální rekapitulace pro Formspree
             document.getElementById('rekapitulace').value = `Jméno: ${document.querySelector('input[name="jmeno"]').value}
 Email: ${document.querySelector('input[name="email"]').value}
 ---
