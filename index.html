@@ -56,6 +56,8 @@
                         <div class="result-text">
                             <h3>Výsledek výpočtu</h3>
                             <p id="vypocet-objem">-</p>
+                            <p id="vypocet-podpory" style="display:none;"></p>
+                            <p id="vypocet-hmotnost-celkem" style="display:none; font-weight: bold;"></p>
                             <p id="vypocet-cena">-</p>
                             <p id="vypocet-cas">-</p>
                             <p id="vtipna-veta">-</p>
@@ -93,7 +95,8 @@
 
     <script>
         let mesh = null;
-        let volume = 0;
+        let modelVolume = 0; // Přejmenováno z 'volume' pro srozumitelnost
+        let supportVolume = 0; // Nová proměnná pro objem podpor
         let uploadedFileUrl = null;
         let uploadedFileName = '';
         const fileNameElement = document.getElementById('file-name');
@@ -106,30 +109,23 @@
         renderer.domElement.className = 'viewer-canvas';
         viewer.appendChild(renderer.domElement);
         
-        // --- ÚPRAVA KAMERY A ORIENTACE ---
         const camera = new THREE.PerspectiveCamera(45, viewer.clientWidth / viewer.clientHeight, 0.1, 1000);
-        camera.position.set(0, -180, 80); // Umístění kamery na osu Y, dívá se "dopředu"
-        camera.up.set(0, 0, 1); // Nastavení osy Z jako "nahoru"
-        camera.lookAt(0, 0, 0); // Zaměření na střed scény
-        // ---------------------------------
-
-        // === FINÁLNÍ OSVĚTLENÍ VÁZANÉ NA KAMERU ===
+        camera.position.set(0, -180, 80);
+        camera.up.set(0, 0, 1);
+        camera.lookAt(0, 0, 0);
+        
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
         scene.add(ambientLight);
-
         const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        keyLight.position.set(1, 1, 1); 
+        keyLight.position.set(1, 1, 1);
         camera.add(keyLight);
-
         const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
         fillLight.position.set(-1, 0.5, 0.5);
         camera.add(fillLight);
-        
         scene.add(camera);
-        // ===========================================
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.target.set(0, 0, 0); // Ujistíme se, že orbit control se také točí kolem středu
+        controls.target.set(0, 0, 0);
         controls.enableDamping = true;
         
         function animate() {
@@ -138,6 +134,57 @@
             renderer.render(scene, camera);
         }
         animate();
+        
+        // =================================================================
+        // NOVÁ FUNKCE PRO ODHAD PODPOR
+        // =================================================================
+        function calculateSupportVolume(geometry, overhangAngleDegrees = 45, supportDensity = 0.10) {
+            const positions = geometry.attributes.position;
+            const downVector = new THREE.Vector3(0, 0, -1);
+            const angleThreshold = Math.cos((90 - overhangAngleDegrees) * Math.PI / 180);
+
+            let totalSupportProjectedArea = 0;
+            let totalSupportHeight = 0;
+            let supportTriangleCount = 0;
+
+            const vA = new THREE.Vector3();
+            const vB = new THREE.Vector3();
+            const vC = new THREE.Vector3();
+            const normal = new THREE.Vector3();
+
+            for (let i = 0; i < positions.count; i += 3) {
+                vA.fromBufferAttribute(positions, i);
+                vB.fromBufferAttribute(positions, i + 1);
+                vC.fromBufferAttribute(positions, i + 2);
+
+                const faceNormal = normal.crossVectors(vB.clone().sub(vA), vC.clone().sub(vA)).normalize();
+                
+                // Zjišťujeme, zda je trojúhelník převis
+                if (faceNormal.dot(downVector) > angleThreshold) {
+                    // Spočítáme 2D průmět plochy trojúhelníku do roviny XY
+                    const projectedArea = Math.abs(0.5 * (vA.x * (vB.y - vC.y) + vB.x * (vC.y - vA.y) + vC.x * (vA.y - vB.y)));
+                    totalSupportProjectedArea += projectedArea;
+
+                    // Průměrná výška trojúhelníku
+                    const avgHeight = (vA.z + vB.z + vC.z) / 3;
+                    totalSupportHeight += avgHeight;
+                    supportTriangleCount++;
+                }
+            }
+            
+            if (supportTriangleCount === 0) {
+                return 0;
+            }
+
+            // Tento výpočet je zjednodušený - neřeší překrývání "stínů"
+            // Pro odhad to ale bude stačit.
+            const averageOverhangHeight = totalSupportHeight / supportTriangleCount;
+            const estimatedFullVolume = totalSupportProjectedArea * averageOverhangHeight;
+            const estimatedRealVolume = estimatedFullVolume * supportDensity; // Aplikujeme hustotu podpor
+
+            return estimatedRealVolume / 1000; // Převod z mm^3 na cm^3
+        }
+
 
         const ucareWidget = uploadcare.Widget('#ucare');
         ucareWidget.onUploadComplete(function(info) {
@@ -152,30 +199,30 @@
                     const loader = new THREE.STLLoader();
                     const geometry = loader.parse(buffer);
                     geometry.computeBoundingBox();
-                    volume = 0;
+                    
+                    // Výpočet objemu modelu
+                    let currentModelVolume = 0;
                     const positions = geometry.attributes.position.array;
                     for (let i = 0; i < positions.length; i += 9) {
                         const ax = positions[i], ay = positions[i + 1], az = positions[i + 2];
                         const bx = positions[i + 3], by = positions[i + 4], bz = positions[i + 5];
                         const cx = positions[i + 6], cy = positions[i + 7], cz = positions[i + 8];
-                        volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx));
+                        currentModelVolume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx));
                     }
-                    volume = Math.abs(volume / 6.0) / 1000;
+                    modelVolume = Math.abs(currentModelVolume / 6.0) / 1000;
+
                     if (mesh) scene.remove(mesh);
                     const material = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 1, metalness: 0 });
                     mesh = new THREE.Mesh(geometry, material);
                     
-                    // --- ÚPRAVA POZICE MODELU ---
-                    // 1. Vycentrujeme geometrii, aby se správně otáčela kolem svého středu
+                    // Posazení modelu na podlahu
                     geometry.center();
-                    
-                    // 2. Zjistíme výšku modelu (v novém Z-up systému)
                     const boundingBox = new THREE.Box3().setFromObject(mesh);
                     const height = boundingBox.max.z - boundingBox.min.z;
-                    
-                    // 3. Posuneme celý model nahoru o polovinu jeho výšky
                     mesh.position.z = height / 2;
-                    // -----------------------------
+                    
+                    // NOVÉ: Výpočet objemu podpor
+                    supportVolume = calculateSupportVolume(geometry, 45, 0.10);
                     
                     scene.add(mesh);
                     if (!axes) {
@@ -185,11 +232,13 @@
                     updateColor();
                 });
         });
+        
         const customUploadButton = document.querySelector('.upload-label');
         customUploadButton.addEventListener('click', function(e) {
             e.preventDefault();
             ucareWidget.openDialog();
         });
+        
         const materialColors = { PLA: ['Černá','Šedá','Bílá','Fialová','Modrá','Zelená','Červená','Růžová','Oranžová','Žlutá','Mramor','WOOD filament'], PETG: ['Černá','Bílá'], ABS: ['Černá','Bílá'], TPU: ['Černá','Bílá','Modrá','Zelená','Červená','Oranžová','Žlutá'] };
         const colorMap = { 'Černá': 0x111111, 'Šedá': 0x666666, 'Bílá': 0xffffff, 'Fialová': 0x800080, 'Modrá': 0x0000ff, 'Zelená': 0x228B22, 'Červená': 0xff0000, 'Žlutá': 0xffff00, 'Oranžová': 0xff6600, 'Růžová': 0xFF69B4, 'Mramor': 0x777777, 'WOOD filament': 0x654321 };
         const materialSelect = document.getElementById('material');
@@ -197,12 +246,15 @@
         const countSelect = document.getElementById('pocet-kusu');
         for (let i = 1; i <= 20; i++) { const opt = document.createElement('option'); opt.value = i; opt.textContent = i; countSelect.appendChild(opt); }
         ['PLA','PETG','ABS','TPU'].forEach(mat => { const opt = document.createElement('option'); opt.value = mat; opt.textContent = mat; materialSelect.appendChild(opt); });
+        
         function refreshColors() { colorSelect.innerHTML = ''; (materialColors[materialSelect.value] || []).forEach(color => { const opt = document.createElement('option'); opt.value = color; opt.textContent = color; colorSelect.appendChild(opt); }); if (mesh) updateColor(); }
         function updateColor() { if (mesh && mesh.material && colorSelect.value) { mesh.material.color.setHex(colorMap[colorSelect.value] || 0x888888); mesh.material.needsUpdate = true; } }
+        
         materialSelect.addEventListener('change', refreshColors);
         colorSelect.addEventListener('change', updateColor);
         materialSelect.value = 'PLA';
         refreshColors();
+        
         document.getElementById('calculate-btn').addEventListener('click', () => {
             if (!mesh) {
                 console.error('Výpočet nelze provést: Nebyl nahrán STL soubor.');
@@ -216,13 +268,28 @@
             let infillPercent = 1.0;
             if (pevnostHodnota === 0.1) infillPercent = 0.10; else if (pevnostHodnota === 0.3) infillPercent = 0.50; else if (pevnostHodnota === 1.0) infillPercent = 1.00;
             const count = parseInt(document.getElementById('pocet-kusu').value) || 1;
-            const meshSize = mesh.geometry.boundingBox.getSize(new THREE.Vector3());
-            const modelVolume = volume; 
-            const mass = modelVolume * densities[material] * infillPercent * count;
-            const timePrint = 7 + mass / 10;
+            
+            // Výpočty hmotnosti
+            const modelMass = modelVolume * densities[material] * infillPercent;
+            const supportMass = supportVolume * densities[material]; // Hustota materiálu, hustotu podpor jsme započítali už při objemu
+            const totalMass = (modelMass + supportMass) * count;
+
+            const timePrint = 7 + (totalMass / count) / 10; // Čas odhadujeme z jednoho kusu
             const cenaZaGram = (material === 'ABS') ? 5 : 4;
-            const castka = mass * cenaZaGram;
-            document.getElementById('vypocet-objem').textContent = `Hmotnost: ${mass.toFixed(2)} g`;
+            const castka = totalMass * cenaZaGram;
+            
+            // Zobrazení výsledků
+            document.getElementById('vypocet-objem').textContent = `Hmotnost modelu: ${modelMass.toFixed(2)} g`;
+            
+            const supportEl = document.getElementById('vypocet-podpory');
+            supportEl.textContent = `Hmotnost podpor (odhad): ${supportMass.toFixed(2)} g`;
+            supportEl.style.display = supportMass > 0 ? 'block' : 'none';
+
+            const totalMassEl = document.getElementById('vypocet-hmotnost-celkem');
+            totalMassEl.textContent = `Celková hmotnost: ${totalMass.toFixed(2)} g / ${count} ks`;
+            totalMassEl.style.display = 'block';
+
+            const meshSize = mesh.geometry.boundingBox.getSize(new THREE.Vector3());
             const rozmerText = `Rozměr: ${meshSize.x.toFixed(1)} × ${meshSize.y.toFixed(1)} × ${meshSize.z.toFixed(1)} mm`;
             const rozmerElement = document.getElementById('rozmer-vypis');
             if (rozmerElement) { rozmerElement.textContent = rozmerText; } else {
@@ -231,7 +298,7 @@
                 rozmerNode.textContent = rozmerText;
                 rozmerNode.style.margin = '0';
                 const resultBox = document.getElementById('vypocet-objem').parentNode;
-                resultBox.insertBefore(rozmerNode, document.getElementById('vypocet-cena'));
+                resultBox.insertBefore(rozmerNode, document.getElementById('vypocet-podpory'));
             }
             document.getElementById('vypocet-cena').textContent = `Odhadovaná cena: ${castka.toFixed(2)} Kč`;
             document.getElementById('vypocet-cas').textContent = `Odhadovaný čas tisku: ${timePrint.toFixed(1)} minut`;
@@ -241,14 +308,17 @@
             const pevnostSelect = document.getElementById('pevnost');
             const pevnostText = pevnostSelect.options[pevnostSelect.selectedIndex].text;
 
+            // Aktualizace rekapitulace
             document.getElementById('rekapitulace').value = `Jméno: ${document.querySelector('input[name="jmeno"]').value}
 Email: ${document.querySelector('input[name="email"]').value}
 ---
 Model: ${uploadedFileName}
 Odkaz na model: ${uploadedFileUrl}
-Hmotnost: ${mass.toFixed(2)} g
+Hmotnost modelu: ${modelMass.toFixed(2)} g
+Hmotnost podpor (odhad): ${supportMass.toFixed(2)} g
+Celková hmotnost/ks: ${(totalMass/count).toFixed(2)} g
 Odhadovaná cena: ${castka.toFixed(2)} Kč
-Odhadovaný čas: ${timePrint.toFixed(1)} min
+Odhadovaný čas/ks: ${timePrint.toFixed(1)} min
 Rozměr: ${meshSize.x.toFixed(1)} × ${meshSize.y.toFixed(1)} × ${meshSize.z.toFixed(1)} mm
 Materiál: ${materialSelect.value}
 Barva: ${colorSelect.value}
